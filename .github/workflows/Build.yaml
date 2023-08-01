@@ -24,6 +24,10 @@ jobs:
     - name: Test
       run: dotnet test --no-build --verbosity normal
     - name: Publish
-      run: dotnet publish MisakaBiliApi/MisakaBiliApi.csproj -c Release
+      run: dotnet publish MisakaBiliApi/MisakaBiliApi.csproj -c Release -o Publish
     - name: Upload a Build Artifact
       uses: actions/upload-artifact@v3
+      with:
+        name: Publish
+        path: MisakaBiliApi/Publish/**
+        if-no-files-found: error

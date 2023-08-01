@@ -5,7 +5,7 @@
 > 示例在线部署：`https://cdnapi.misakal.xyz/` **小水管服务器，建议自行部署，不要滥用！！！** 
 ## Docker
 ```
-sudo docker run -d --name MisakaBiliApi -p 80:5000 ghcr.io/disappear9/misakabiliapi:latest
+sudo docker run -d --name MisakaBiliApi -p 80:80 ghcr.io/disappear9/misakabiliapi:latest
 ```
 
 ### 请求视频流链接

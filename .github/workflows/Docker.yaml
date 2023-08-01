@@ -4,7 +4,7 @@ on:
 
 env:
   REGISTRY: ghcr.io
-  IMAGE: disappear9/MisakaBiliApi
+  IMAGE: disappear9/misakabiliapi
 
 jobs:
   push_to_registry:

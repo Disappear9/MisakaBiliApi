@@ -1,15 +1,18 @@
-FROM mcr.microsoft.com/dotnet/sdk:7.0 AS build-env
-WORKDIR /App
+FROM mcr.microsoft.com/dotnet/sdk:8.0 AS build
+WORKDIR /MisakaBiliApi
 
-# Copy everything
-COPY . ./
-# Restore as distinct layers
+COPY *.sln .
+COPY MisakaBiliApi/*.csproj ./MisakaBiliApi/
 RUN dotnet restore
-# Build and publish a release
-RUN dotnet publish MisakaBiliApi/MisakaBiliApi.csproj -c Release -o out
 
-# Build runtime image
-FROM mcr.microsoft.com/dotnet/aspnet:7.0
-WORKDIR /App
-COPY --from=build-env /App/out .
+COPY MisakaBiliApi/. ./MisakaBiliApi/
+# WORKDIR /MisakaBiliApi/MisakaBiliApi
+RUN dotnet publish -c release -o /app --no-restore
+
+FROM mcr.microsoft.com/dotnet/aspnet:8.0
+WORKDIR /app
+COPY --from=build /app ./
+
+EXPOSE 80
+
 ENTRYPOINT ["dotnet", "MisakaBiliApi.dll"]

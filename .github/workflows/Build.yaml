@@ -3,6 +3,9 @@
 
 name: Build
 
+env:
+  TAG_NAME: release
+
 on:
   workflow_dispatch:
 
@@ -33,3 +36,10 @@ jobs:
         name: Artifact
         path: Publish/
         if-no-files-found: error
+    - name: tar.gz Publish dir
+      run: tar -czvf Publish.tar.gz Publish
+    - name: Upload full firmware to release
+      uses: softprops/action-gh-release@v2
+      with:
+        tag_name: ${{ env.TAG_NAME }}
+        files: Publish.tar.gz

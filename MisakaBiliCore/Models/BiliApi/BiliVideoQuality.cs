@@ -1,4 +1,4 @@
-﻿namespace MisakaBiliApi.Models.Bili;
+﻿namespace MisakaBiliCore.Models.BiliApi;
 
 /// <summary>
 /// 哔哩哔哩视频质量参数（qn）
@@ -54,7 +54,31 @@ public enum BiliVideoStreamType
     /// </summary>
     Mp4 = 1,
     /// <summary>
+    /// DASH
+    /// </summary>
+    Dash = 16,
+    /// <summary>
+    /// HDR
+    /// </summary>
+    HDR = 64,
+    /// <summary>
     /// 4K
     /// </summary>
-    R4K = 128
+    R4K = 128,
+    /// <summary>
+    /// Dobly
+    /// </summary>
+    Dobly = 256,
+    /// <summary>
+    /// DoblyVision
+    /// </summary>
+    DoblyVision = 256,
+    /// <summary>
+    /// 8K
+    /// </summary>
+    R8K = 1024,
+    /// <summary>
+    /// AV1 Encoder
+    /// </summary>
+    AV1 = 2048,
 }

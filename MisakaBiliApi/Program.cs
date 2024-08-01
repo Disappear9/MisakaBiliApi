@@ -1,23 +1,41 @@
-using System.Diagnostics;
 using System.Net;
-using System.Net.Mime;
 using System.Reflection;
-using Microsoft.AspNetCore.Mvc;
-using Microsoft.Extensions.Primitives;
+using Microsoft.Extensions.Options;
 using Microsoft.OpenApi.Any;
 using Microsoft.OpenApi.Interfaces;
 using Microsoft.OpenApi.Models;
-using Microsoft.OpenApi.Services;
-using MisakaBiliApi;
-using MisakaBiliApi.Filters;
-using MisakaBiliApi.Forwarder;
-using MisakaBiliApi.Models.ApiResponse;
-using MisakaBiliApi.Services;
+using MisakaBiliCore;
+using MisakaBiliCore.Options;
+using MisakaBiliCore.Services;
+using MisakaBiliCore.Services.BiliApi;
 using Refit;
 using Serilog;
 using Serilog.Templates;
 using Serilog.Templates.Themes;
-using Yarp.ReverseProxy.Forwarder;
+
+Dictionary<string, string> defaultRequestHeader = new()
+{
+    { "Connection", "keep-alive" },
+    { "sec-ch-ua", "\"Not)A;Brand\";v=\"99\", \"Microsoft Edge\";v=\"127\", \"Chromium\";v=\"127\"" },
+    { "sec-ch-ua-mobile", "?0" },
+    { "sec-ch-ua-platform", "\"Windows\"" },
+    { "DNT", "1" },
+    { "Upgrade-Insecure-Requests", "1" },
+    {
+        "User-Agent",
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36 Edg/127.0.0.0"
+    },
+    {
+        "Accept",
+        "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7"
+    },
+    { "Sec-Fetch-Site", "none" },
+    { "Sec-Fetch-Mode", "navigate" },
+    { "Sec-Fetch-User", "?1" },
+    { "Sec-Fetch-Dest", "document" },
+    { "Accept-Encoding", "gzip, deflate, br, zstd" },
+    { "Accept-Language", "zh-CN,zh;q=0.9" }
+};
 
 var logTemplate =
     "[{@t:yyyy-MM-dd HH:mm:ss} {@l:u3}] [{Substring(SourceContext, LastIndexOf(SourceContext, '.') + 1)}] {@m}\n{@x}";
@@ -31,15 +49,6 @@ Log.Logger = new LoggerConfiguration()
     .WriteTo.Debug(new ExpressionTemplate(logTemplate))
     .CreateLogger();
 
-// Add services to the container.
-
-builder.Services.AddControllers(options =>
-{
-    options.Filters.Add<ExceptionFilter>();
-    options.Filters.Add<ApiActionFilter>();
-});
-
-// Learn more about configuring Swagger/OpenAPI at https://aka.ms/aspnetcore/swashbuckle
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen(options =>
 {
@@ -59,17 +68,105 @@ builder.Services.AddSwaggerGen(options =>
             }
         }
     });
-    
+
     var xmlFilename = $"{Assembly.GetExecutingAssembly().GetName().Name}.xml";
     options.IncludeXmlComments(Path.Combine(AppContext.BaseDirectory, xmlFilename));
 });
 
-builder.Services.AddReverseProxy()
-    .LoadFromConfig(builder.Configuration.GetSection("ReverseProxy"));
-builder.Services.AddHttpForwarder();
+#region Options
 
-builder.Services.AddRefitClient<IBiliApiServer>()
-    .ConfigureHttpClient(client => client.BaseAddress = new Uri("https://api.bilibili.com"));
+builder.Services.AddOptions<ApiBaseUrlOptions>()
+    .Bind(builder.Configuration.GetSection("ApiBaseUrl"))
+    .ValidateDataAnnotations()
+    .ValidateOnStart();
+
+#endregion
+
+builder.Services.AddSingleton<BiliApiSecretStorageService>();
+builder.Services.AddSingleton<BiliPassportService>();
+
+builder.Services.AddTransient<WbiRequestHandler>();
+
+builder.Services.AddHostedService<BiliApiCredentialRefreshHostService>();
+
+#region HttpClient & Refit
+
+#region HttpClient
+
+builder.Services.AddHttpClient("biliapi", (services, client) =>
+{
+    var options = services.GetRequiredService<IOptions<ApiBaseUrlOptions>>().Value;
+
+    foreach (var (headerName, value) in defaultRequestHeader)
+    {
+        client.DefaultRequestHeaders.Add(headerName, value);
+    }
+
+    client.BaseAddress = new Uri(options.BiliApiBaseUrl);
+}).ConfigurePrimaryHttpMessageHandler(services => new SocketsHttpHandler
+{
+    AutomaticDecompression = DecompressionMethods.All,
+    CookieContainer = services.GetRequiredService<BiliApiSecretStorageService>().CookieContainer
+});
+
+builder.Services.AddHttpClient("biliMainWeb", (services, client) =>
+{
+    var options = services.GetRequiredService<IOptions<ApiBaseUrlOptions>>().Value;
+
+    foreach (var (headerName, value) in defaultRequestHeader)
+    {
+        client.DefaultRequestHeaders.Add(headerName, value);
+    }
+
+    client.BaseAddress = new Uri(options.BiliWebBaseUrl);
+}).ConfigurePrimaryHttpMessageHandler(services => new SocketsHttpHandler
+{
+    AutomaticDecompression = DecompressionMethods.All,
+    CookieContainer = services.GetRequiredService<BiliApiSecretStorageService>().CookieContainer
+});
+
+#endregion
+
+builder.Services.AddRefitClient<IBiliApiServices>(null, httpClientName: "biliapi")
+    .AddHttpMessageHandler<WbiRequestHandler>();
+
+builder.Services.AddRefitClient<IBiliLiveApiService>()
+    .ConfigureHttpClient((services, client) =>
+    {
+        var options = services.GetRequiredService<IOptions<ApiBaseUrlOptions>>().Value;
+
+        foreach (var (headerName, value) in defaultRequestHeader)
+        {
+            client.DefaultRequestHeaders.Add(headerName, value);
+        }
+
+        client.BaseAddress = new Uri(options.BiliLiveApiBaseUrl);
+    }).ConfigurePrimaryHttpMessageHandler(services => new SocketsHttpHandler
+    {
+        AutomaticDecompression = DecompressionMethods.All,
+        CookieContainer = services.GetRequiredService<BiliApiSecretStorageService>().CookieContainer
+    });
+
+builder.Services.AddRefitClient<IBiliPassportApiService>()
+    .ConfigureHttpClient((services, client) =>
+    {
+        var options = services.GetRequiredService<IOptions<ApiBaseUrlOptions>>().Value;
+
+        foreach (var (headerName, value) in defaultRequestHeader)
+        {
+            client.DefaultRequestHeaders.Add(headerName, value);
+        }
+
+        client.BaseAddress = new Uri(options.BiliPassportBaseUrl);
+    }).ConfigurePrimaryHttpMessageHandler(services => new SocketsHttpHandler
+    {
+        AutomaticDecompression = DecompressionMethods.All,
+        CookieContainer = services.GetRequiredService<BiliApiSecretStorageService>().CookieContainer
+    });
+
+#endregion
+
+builder.Services.AddControllers();
 
 builder.Host.UseSerilog();
 
@@ -82,52 +179,6 @@ app.UseSwaggerUI();
 
 app.UseHttpsRedirection();
 
-Configure(app);
-
 app.MapControllers();
 
-app.MapReverseProxy();
-
-app.Run();
-
-void Configure(IApplicationBuilder app)
-{
-    var httpClient = new HttpMessageInvoker(new SocketsHttpHandler()
-    {
-        UseProxy = false,
-        AllowAutoRedirect = false,
-        AutomaticDecompression = DecompressionMethods.None,
-        UseCookies = false,
-        ActivityHeadersPropagator = new ReverseProxyPropagator(DistributedContextPropagator.Current),
-        ConnectTimeout = TimeSpan.FromSeconds(15),
-    });
-
-    var transformer = new BiliVideoTransformer();
-    var requestConfig = new ForwarderRequestConfig { ActivityTimeout = TimeSpan.FromSeconds(100) };
-
-    app.UseRouting();
-    app.UseAuthorization();
-    app.UseEndpoints(endpoints =>
-    {
-        endpoints.Map("/forward/bilibili/{**catch-all}", async httpContext =>
-        {
-            var proxyHost = new Uri("https://" + httpContext.Request.Path.Value?.Replace("/forward/bilibili/", "") ?? string.Empty)
-                .Host;
-            if (!(httpContext.Request.Path.HasValue & (proxyHost.EndsWith("bilivideo.com") || proxyHost.EndsWith("akamaized.net"))))
-            {
-                httpContext.Response.StatusCode = 400;
-                return;
-            }
-
-            var error = await app.ApplicationServices.GetRequiredService<IHttpForwarder>().SendAsync(httpContext,
-                "https://" + proxyHost,
-                httpClient, requestConfig, transformer);
-            // Check if the operation was successful
-            if (error != ForwarderError.None)
-            {
-                var errorFeature = httpContext.GetForwarderErrorFeature();
-                var exception = errorFeature.Exception;
-            }
-        });
-    });
-}
+await app.RunAsync();

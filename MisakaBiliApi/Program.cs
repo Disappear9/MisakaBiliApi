@@ -4,6 +4,8 @@ using Microsoft.Extensions.Options;
 using Microsoft.OpenApi.Any;
 using Microsoft.OpenApi.Interfaces;
 using Microsoft.OpenApi.Models;
+using MisakaBiliApi;
+using MisakaBiliApi.Options;
 using MisakaBiliCore;
 using MisakaBiliCore.Options;
 using MisakaBiliCore.Services;
@@ -49,6 +51,8 @@ Log.Logger = new LoggerConfiguration()
     .WriteTo.Debug(new ExpressionTemplate(logTemplate))
     .CreateLogger();
 
+#region ApiDoc
+
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen(options =>
 {
@@ -56,8 +60,8 @@ builder.Services.AddSwaggerGen(options =>
     {
         Version = "v1",
         Title = "Misaka-L's Bili Api",
-        Description = "A simple api.",
-        Contact = new OpenApiContact()
+        Description = "一个简单的哔哩哔哩 API",
+        Contact = new OpenApiContact
         {
             Name = "Misaka-L",
             Email = "lipww1234@foxmail.com",
@@ -69,9 +73,21 @@ builder.Services.AddSwaggerGen(options =>
         }
     });
 
+    options.AddSecurityDefinition("ApiKey", new OpenApiSecurityScheme
+    {
+        In = ParameterLocation.Header,
+        Name = "X-Api-Key",
+        Type = SecuritySchemeType.ApiKey
+    });
+
+    options.OperationFilter<SecurityRequirementsOperationFilter>();
+
     var xmlFilename = $"{Assembly.GetExecutingAssembly().GetName().Name}.xml";
-    options.IncludeXmlComments(Path.Combine(AppContext.BaseDirectory, xmlFilename));
+    var xmlFilePath = Path.Combine(AppContext.BaseDirectory, xmlFilename);
+    options.IncludeXmlComments(xmlFilePath);
 });
+
+#endregion
 
 #region Options
 
@@ -80,10 +96,29 @@ builder.Services.AddOptions<ApiBaseUrlOptions>()
     .ValidateDataAnnotations()
     .ValidateOnStart();
 
+builder.Services.AddOptions<ManagementApiKeyOptions>()
+    .Bind(builder.Configuration.GetSection("ManagementApiKey"))
+    .ValidateDataAnnotations()
+    .ValidateOnStart();
+
+var managementApiKeyOptions = builder.Configuration.GetSection("ManagementApiKey").Get<ManagementApiKeyOptions>() ??
+                              new ManagementApiKeyOptions();
+
 #endregion
+
+builder.Services.AddAuthentication()
+    .AddScheme<ApiKeyAuthenticationOptions, ApiKeyAuthenticationHandler>("ApiKey",
+        options => { options.ApiKey = managementApiKeyOptions.ApiKey; });
+
+builder.Services.AddAuthorization(options =>
+{
+    options.AddPolicy("ApiKey", policy => { policy.RequireClaim("ApiKey", managementApiKeyOptions.ApiKey); });
+});
 
 builder.Services.AddSingleton<BiliApiSecretStorageService>();
 builder.Services.AddSingleton<BiliPassportService>();
+
+builder.Services.AddTransient<BiliStreamUrlRequestService>();
 
 builder.Services.AddTransient<WbiRequestHandler>();
 
@@ -123,6 +158,14 @@ builder.Services.AddHttpClient("biliMainWeb", (services, client) =>
 {
     AutomaticDecompression = DecompressionMethods.All,
     CookieContainer = services.GetRequiredService<BiliApiSecretStorageService>().CookieContainer
+});
+
+builder.Services.AddHttpClient<BiliStreamUrlRequestService>(client =>
+{
+    foreach (var (headerName, value) in defaultRequestHeader)
+    {
+        client.DefaultRequestHeaders.Add(headerName, value);
+    }
 });
 
 #endregion
@@ -168,6 +211,8 @@ builder.Services.AddRefitClient<IBiliPassportApiService>()
 
 builder.Services.AddControllers();
 
+builder.Services.AddMemoryCache();
+
 builder.Host.UseSerilog();
 
 var app = builder.Build();
@@ -176,6 +221,30 @@ app.UseSerilogRequestLogging();
 
 app.UseSwagger();
 app.UseSwaggerUI();
+
+app.MapGet("/api-docs", () => Results.Content(
+    $$"""
+      <!doctype html>
+      <html>
+      <head>
+          <title>MisakaBiliApi Reference</title>
+          <meta charset="utf-8" />
+          <meta name="viewport" content="width=device-width, initial-scale=1" />
+      </head>
+      <body>
+          <script id="api-reference" data-url="/swagger/v1/swagger.json"></script>
+          <script>
+          var configuration = {}
+      
+          document.getElementById('api-reference').dataset.configuration =
+              JSON.stringify(configuration)
+          </script>
+          <script src="https://cdn.jsdelivr.net/npm/@scalar/api-reference"></script>
+      </body>
+      </html>
+      """,
+    "text/html"
+));
 
 app.UseHttpsRedirection();
 
